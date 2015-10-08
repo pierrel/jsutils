@@ -1,0 +1,84 @@
+#!/usr/bin/env node
+const exec = require('child_process').exec;
+const spawn = require('child_process').spawn;
+const R = require('ramda');
+
+const myInstance = process.env.MY_EC2_INSTANCE;
+const myKey = process.env.MY_EC2_PUBKEY;
+const myUser = process.env.MY_EC2_USER;
+
+function isInstanceOff(instanceJson) { 
+  return instanceJson["State"]["Name"] === "stopped"; 
+}
+
+function isInstanceOn(instanceJson) {
+  return instanceJson["State"]["Name"] === "running";
+}
+
+function waitForInstanceToComeOn(instanceId, callback) {
+  function startWaiting(instanceId, callback, waits, maxWaits) {
+    exec("aws ec2 describe-instances", function (error, stdout, stderr) {
+      if (error !== null) {
+        console.log('exec error: ' + error);
+      } else {
+        instanceJson = findInstance(JSON.parse(stdout), instanceId);
+        if (isInstanceOn(instanceJson)) {
+          return callback(instanceJson);
+        } else if (waits === maxWaits) {
+          console.log('waited ' + waits + ' times, aborting');
+        }
+        else {
+          console.log('waiting for instance to come on');
+          return setTimeout(function() { return startWaiting(instanceId, callback, waits+1, maxWaits) }, 5000);
+        }
+      }
+    });
+  }
+
+  startWaiting(instanceId, callback, 0, 20);
+}
+
+function findInstance(describeJson, instanceId) {
+  const instances = describeJson["Reservations"][0]["Instances"];
+
+  return R.find(R.propEq('InstanceId', myInstance))(instances);
+}
+
+function turnInstanceOn(instanceJson, callback) {
+  const instanceId = instanceJson["InstanceId"];
+  exec("aws ec2 start-instances --instance-ids " + instanceId, function(error, stdout, stderr) {
+    if (error !== null) {
+      console.log('exec error: ' + error);
+    } else {
+      callback(instanceJson);
+    }
+  });
+}
+
+function getOnRunningInstance(instance) {
+  const ip = instance["PublicIpAddress"];
+  const address = myUser + '@' + ip;
+  const args = ['-i', myKey, address];
+
+  spawn('ssh', args, {stdio: 'inherit'});
+}
+
+exec("aws ec2 describe-instances", function (error, stdout, stderr) {
+  if (error !== null) {
+    console.log('exec error: ' + error);
+  } else {
+    const json = JSON.parse(stdout);
+    const instance = findInstance(json, myInstance);
+    
+    if (!instance) {
+      console.log('Could not find instance with ID ' + myInstance);
+      console.log('Check json: ' + stdout);
+    } else if (isInstanceOff(instance)) {
+      console.log('instance is off, turning on');
+      turnInstanceOn(instance,
+                     function(runningInstance) { waitForInstanceToComeOn(instance, getOnRunningInstance) });
+    } else {
+      getOnRunningInstance(instance);
+    }
+  }
+});
