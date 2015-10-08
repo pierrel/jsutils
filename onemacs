@@ -1,0 +1,29 @@
+#!/usr/bin/env node
+const exec = require('child_process').exec;
+const spawn = require('child_process').spawn;
+
+function isEmacsRunning(psOut) {
+  const programs = psOut.split("\n");
+  const matchings = programs.filter(function(item) {
+    return /\d emacs --daemon$/.test(item);
+  });	
+
+  return matchings.length !== 0;
+}
+
+exec('ps x', function(error, stdout, stderr) {
+  if (error) {
+    console.log('error checking is Emacs is running');
+  } else if (isEmacsRunning(stdout)) {
+    console.log('Emacs is running');
+  } else {
+    console.log('Emacs is not running, starting');
+    exec('emacs --daemon', function(error, stdout, stderr) {
+      if (error) {
+        console.log('error starting Emacs');
+      } else {
+        console.log('Emacs is now running');
+      }
+    });	
+  }
+});
